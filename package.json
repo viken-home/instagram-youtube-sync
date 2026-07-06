@@ -1,0 +1,14 @@
+{
+  "name": "instagram-youtube-sync",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "sync": "node sync.js",
+    "setup-youtube-auth": "node setup-youtube-auth.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "googleapis": "^140.0.1",
+    "nodemailer": "^6.9.13"
+  }
+}
