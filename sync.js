@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { google } from 'googleapis';
 import nodemailer from 'nodemailer';
+import { COMPILATION_BATCH_SIZE, ffmpegAvailable, buildAndUploadCompilation } from './compilation.js';
 
 const {
   IG_ACCESS_TOKEN,
@@ -28,7 +29,8 @@ function requireEnv(vars) {
 
 async function loadProcessed() {
   const raw = await fsp.readFile(PROCESSED_PATH, 'utf-8');
-  return JSON.parse(raw);
+  const data = JSON.parse(raw);
+  return { processedIds: data.processedIds ?? [], pendingCompilation: data.pendingCompilation ?? [] };
 }
 
 async function saveProcessed(data) {
@@ -94,10 +96,15 @@ const BRAND_FOOTER = [
 const HASHTAGS = '#VikenHome #Decoracion #Hogar #Shorts';
 const TAGS = ['VikenHome', 'Decoracion', 'Hogar', 'Shorts'];
 
+function sanitizeForYoutube(text) {
+  // YouTube rechaza < y > en título/descripción (error "invalid video description").
+  return text.replace(/>/g, '→').replace(/</g, '‹');
+}
+
 function buildTitle(caption, timestamp) {
   const fallback = `Reel de Instagram - ${new Date(timestamp).toLocaleDateString('es-AR')}`;
   if (!caption) return fallback;
-  const firstLine = caption.split('\n')[0].trim();
+  const firstLine = sanitizeForYoutube(caption.split('\n')[0].trim());
   const title = firstLine || fallback;
   if (title.length <= MAX_TITLE_LENGTH) return title;
   const cut = title.slice(0, MAX_TITLE_LENGTH - 3);
@@ -106,9 +113,10 @@ function buildTitle(caption, timestamp) {
 }
 
 function buildDescription(caption, permalink) {
-  return [caption, '', BRAND_FOOTER, '', `Post original: ${permalink}`, '', HASHTAGS]
+  const body = [caption, '', BRAND_FOOTER, '', `Post original: ${permalink}`, '', HASHTAGS]
     .filter((line) => line !== null && line !== undefined)
     .join('\n');
+  return sanitizeForYoutube(body);
 }
 
 async function uploadToYoutube(youtube, { filePath, title, description }) {
@@ -123,7 +131,20 @@ async function uploadToYoutube(youtube, { filePath, title, description }) {
   return res.data.id;
 }
 
-async function sendNotificationEmail(uploaded) {
+function buildEmailSection(title, items) {
+  if (items.length === 0) return '';
+  const listHtml = items
+    .map(
+      (item) =>
+        `<li><a href="https://studio.youtube.com/video/${item.youtubeId}/edit">${item.title}</a>` +
+        (item.permalink ? ` (<a href="${item.permalink}">post original</a>)` : '') +
+        '</li>'
+    )
+    .join('');
+  return `<p>${title}</p><ul>${listHtml}</ul>`;
+}
+
+async function sendNotificationEmail(uploaded, compilations) {
   if (!GMAIL_APP_PASSWORD || !NOTIFY_EMAIL) {
     console.warn('GMAIL_APP_PASSWORD o NOTIFY_EMAIL no configurados: se omite el mail.');
     return;
@@ -134,19 +155,17 @@ async function sendNotificationEmail(uploaded) {
     auth: { user: NOTIFY_EMAIL, pass: GMAIL_APP_PASSWORD },
   });
 
-  const listHtml = uploaded
-    .map(
-      (item) =>
-        `<li><a href="https://studio.youtube.com/video/${item.youtubeId}/edit">${item.title}</a> ` +
-        `(<a href="${item.permalink}">post original</a>)</li>`
-    )
-    .join('');
+  const html =
+    '<p>Novedades subidas a YouTube como video privado. Revisalas y publicalas manualmente desde YouTube Studio:</p>' +
+    buildEmailSection('Reels individuales:', uploaded) +
+    buildEmailSection('Recopilaciones:', compilations);
 
+  const total = uploaded.length + compilations.length;
   await transporter.sendMail({
     from: NOTIFY_EMAIL,
     to: NOTIFY_EMAIL,
-    subject: `${uploaded.length} Reel(s) nuevo(s) subido(s) a YouTube como borrador`,
-    html: `<p>Se subieron los siguientes Reels a YouTube como video privado. Revisalos y publicalos manualmente desde YouTube Studio:</p><ul>${listHtml}</ul>`,
+    subject: `${total} video(s) nuevo(s) subido(s) a YouTube como borrador`,
+    html,
   });
 }
 
@@ -161,45 +180,76 @@ async function main() {
 
   const processed = await loadProcessed();
   const processedIds = new Set(processed.processedIds);
+  const pendingCompilation = [...processed.pendingCompilation];
+
+  const persist = () =>
+    saveProcessed({ processedIds: [...processedIds], pendingCompilation });
 
   const reels = await fetchInstagramReels();
   const newReels = reels.filter((r) => !processedIds.has(r.id));
 
-  if (newReels.length === 0) {
-    console.log('No hay reels nuevos.');
-    return;
-  }
-
-  console.log(`Encontrados ${newReels.length} reel(s) nuevo(s).`);
   const youtube = buildYoutubeClient();
   const uploaded = [];
 
-  for (const reel of newReels) {
-    const tmpFile = path.join(os.tmpdir(), `${reel.id}.mp4`);
-    try {
-      console.log(`Descargando ${reel.id}...`);
-      await downloadVideo(reel.media_url, tmpFile);
+  if (newReels.length === 0) {
+    console.log('No hay reels nuevos.');
+  } else {
+    console.log(`Encontrados ${newReels.length} reel(s) nuevo(s).`);
 
-      const title = buildTitle(reel.caption, reel.timestamp);
-      const description = buildDescription(reel.caption, reel.permalink);
+    for (const reel of newReels) {
+      const tmpFile = path.join(os.tmpdir(), `${reel.id}.mp4`);
+      try {
+        console.log(`Descargando ${reel.id}...`);
+        await downloadVideo(reel.media_url, tmpFile);
 
-      console.log(`Subiendo ${reel.id} a YouTube...`);
-      const youtubeId = await uploadToYoutube(youtube, { filePath: tmpFile, title, description });
+        const title = buildTitle(reel.caption, reel.timestamp);
+        const description = buildDescription(reel.caption, reel.permalink);
 
-      uploaded.push({ youtubeId, title, permalink: reel.permalink });
+        console.log(`Subiendo ${reel.id} a YouTube...`);
+        const youtubeId = await uploadToYoutube(youtube, { filePath: tmpFile, title, description });
 
-      processedIds.add(reel.id);
-      await saveProcessed({ processedIds: [...processedIds] });
-      console.log(`OK: ${reel.id} -> https://studio.youtube.com/video/${youtubeId}/edit`);
-    } catch (err) {
-      console.error(`Error procesando ${reel.id}:`, err.message);
-    } finally {
-      await fsp.rm(tmpFile, { force: true });
+        uploaded.push({ youtubeId, title, permalink: reel.permalink });
+
+        processedIds.add(reel.id);
+        pendingCompilation.push({ id: reel.id, permalink: reel.permalink });
+        await persist();
+        console.log(`OK: ${reel.id} -> https://studio.youtube.com/video/${youtubeId}/edit`);
+      } catch (err) {
+        console.error(`Error procesando ${reel.id}:`, err.message);
+      } finally {
+        await fsp.rm(tmpFile, { force: true });
+      }
     }
   }
 
-  if (uploaded.length > 0) {
-    await sendNotificationEmail(uploaded);
+  const compilations = [];
+  if (pendingCompilation.length >= COMPILATION_BATCH_SIZE) {
+    if (await ffmpegAvailable()) {
+      while (pendingCompilation.length >= COMPILATION_BATCH_SIZE) {
+        const batch = pendingCompilation.slice(0, COMPILATION_BATCH_SIZE);
+        console.log(`Armando recopilación con ${batch.length} reels...`);
+        try {
+          const { youtubeId, title } = await buildAndUploadCompilation({
+            batch,
+            accessToken: IG_ACCESS_TOKEN,
+            youtube,
+          });
+          compilations.push({ youtubeId, title });
+          pendingCompilation.splice(0, COMPILATION_BATCH_SIZE);
+          await persist();
+          console.log(`OK recopilación: ${title} -> https://studio.youtube.com/video/${youtubeId}/edit`);
+        } catch (err) {
+          console.error('Error armando recopilación:', err.message);
+          break;
+        }
+      }
+    } else {
+      console.warn('ffmpeg no disponible: se omite la recopilación por ahora.');
+    }
+  }
+
+  if (uploaded.length > 0 || compilations.length > 0) {
+    await sendNotificationEmail(uploaded, compilations);
   }
 }
 
