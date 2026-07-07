@@ -76,6 +76,9 @@ async function buildCard(text, subtext, output) {
       `drawtext=text='${escapeDrawtext(subtext)}':fontcolor=gray:fontsize=48:${FONT_ARG}:x=(w-text_w)/2:y=(h-text_h)/2+60`
     );
   }
+  // fps=30 para que coincida con el timebase de los clips normalizados (si no, xfade falla con
+  // "First input link main timebase do not match the corresponding second input link xfade timebase").
+  lines.push('fps=30');
 
   await execFileAsync('ffmpeg', [
     '-y',
