@@ -4,6 +4,7 @@ import fsp from 'node:fs/promises';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { sanitizeForYoutube, truncateTitle } from './text-utils.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -127,21 +128,57 @@ async function concatenateWithTransitions(segments, outputPath) {
   );
 }
 
-function buildCompilationDescription(permalinks) {
-  const list = permalinks.map((p) => `• ${p}`).join('\n');
-  return [
-    'Una selección de piezas VIKEN Home 🏠 — diseñamos y fabricamos nosotros mismos cada una, en nuestro propio taller.',
-    '',
+// Título variado por recopilación: usa el gancho (primera línea del caption) del primer
+// clip de la tanda, igual criterio que los Shorts individuales, en vez del genérico fijo
+// "N ideas de decoracion" que salía idéntico en todas las recopilaciones.
+function buildCompilationTitle(items) {
+  const count = items.length;
+  const first = items.find((item) => item.caption && item.caption.trim());
+  if (!first) return `${count} ideas de decoracion | VIKEN Home`;
+
+  const suffix = ' | VIKEN Home';
+  const headline = sanitizeForYoutube(first.caption.split('\n')[0].trim());
+  const trimmed = truncateTitle(headline, 95 - suffix.length);
+  return `${trimmed}${suffix}`;
+}
+
+const YOUTUBE_DESCRIPTION_LIMIT = 5000;
+
+// Incluye el copy real de cada Reel (no solo el link), para que la descripción refleje
+// el contenido de la recopilación igual que hace Instagram.
+function buildCompilationDescription(items) {
+  const header = 'Una selección de piezas VIKEN Home 🏠 — diseñamos y fabricamos nosotros mismos cada una, en nuestro propio taller.';
+  const footer = [
     '¿Querés armar tu rincón? Te asesoramos 1:1 por Instagram.',
     '',
     '📷 Instagram: https://www.instagram.com/vikenhome_',
     '🛒 Comprá acá: https://www.viken.com.ar',
     '',
-    'Posts originales:',
-    list,
-    '',
     '#VikenHome #Decoracion #Hogar',
   ].join('\n');
+
+  // Los captions de Instagram pueden llegar a 2200 caracteres cada uno; con varios clips
+  // por recopilación se puede superar el límite de YouTube, así que se recorta cada caption
+  // proporcionalmente en vez de cortar la descripción entera a la mitad.
+  const budget = YOUTUBE_DESCRIPTION_LIMIT - header.length - footer.length - 40 * items.length;
+  const perCaptionBudget = Math.max(200, Math.floor(budget / Math.max(items.length, 1)));
+
+  const sections = items
+    .map(({ caption, permalink }) => {
+      const lines = [];
+      if (caption && caption.trim()) {
+        const trimmedCaption =
+          caption.trim().length > perCaptionBudget
+            ? `${caption.trim().slice(0, perCaptionBudget - 1)}…`
+            : caption.trim();
+        lines.push(sanitizeForYoutube(trimmedCaption));
+      }
+      lines.push(permalink);
+      return lines.join('\n');
+    })
+    .join('\n\n—\n\n');
+
+  return sanitizeForYoutube([header, '', sections, '', footer].join('\n'));
 }
 
 async function uploadCompilation(youtube, { filePath, title, description }) {
@@ -176,7 +213,7 @@ export async function buildAndUploadCompilation({ pending, batchSize, accessToke
     const segments = [];
     const usedIds = [];
     const deadIds = [];
-    const permalinks = [];
+    const items = [];
 
     const introCard = path.join(workDir, 'intro.mp4');
     await buildCard('VIKEN HOME', 'Diseno y fabricacion propia', introCard);
@@ -205,7 +242,7 @@ export async function buildAndUploadCompilation({ pending, batchSize, accessToke
       await normalizeClip(raw, normalized);
       const duration = await getDuration(normalized);
       segments.push({ file: normalized, duration });
-      permalinks.push(media.permalink ?? item.permalink);
+      items.push({ caption: media.caption, permalink: media.permalink ?? item.permalink });
       usedIds.push(item.id);
     }
 
@@ -220,8 +257,8 @@ export async function buildAndUploadCompilation({ pending, batchSize, accessToke
     const output = path.join(workDir, 'compilation.mp4');
     await concatenateWithTransitions(segments, output);
 
-    const title = `${usedIds.length} ideas de decoracion | VIKEN Home`;
-    const description = buildCompilationDescription(permalinks);
+    const title = buildCompilationTitle(items);
+    const description = buildCompilationDescription(items);
     const youtubeId = await uploadCompilation(youtube, { filePath: output, title, description });
 
     return { youtubeId, title, usedIds, deadIds };

@@ -6,6 +6,7 @@ import path from 'node:path';
 import { google } from 'googleapis';
 import nodemailer from 'nodemailer';
 import { COMPILATION_BATCH_SIZE, ffmpegAvailable, buildAndUploadCompilation } from './compilation.js';
+import { MAX_TITLE_LENGTH, sanitizeForYoutube, truncateTitle } from './text-utils.js';
 
 const {
   IG_ACCESS_TOKEN,
@@ -82,8 +83,6 @@ function buildYoutubeClient() {
   return google.youtube({ version: 'v3', auth: oauth2Client });
 }
 
-const MAX_TITLE_LENGTH = 95;
-
 const BRAND_FOOTER = [
   'VIKEN Home 🏠 diseñamos y fabricamos nosotros mismos cada pieza de decoración — no es catálogo genérico, es taller propio, así que lo que ves acá no lo conseguís en otro lado.',
   '',
@@ -104,20 +103,12 @@ const TAGS = [
   'Decoracion nordica', 'Ambientacion', 'Interiorismo',
 ];
 
-function sanitizeForYoutube(text) {
-  // YouTube rechaza < y > en título/descripción (error "invalid video description").
-  return text.replace(/>/g, '→').replace(/</g, '‹');
-}
-
 function buildTitle(caption, timestamp) {
   const fallback = `Reel de Instagram - ${new Date(timestamp).toLocaleDateString('es-AR')}`;
   if (!caption) return fallback;
   const firstLine = sanitizeForYoutube(caption.split('\n')[0].trim());
   const title = firstLine || fallback;
-  if (title.length <= MAX_TITLE_LENGTH) return title;
-  const cut = title.slice(0, MAX_TITLE_LENGTH - 3);
-  const lastSpace = cut.lastIndexOf(' ');
-  return `${cut.slice(0, lastSpace > 40 ? lastSpace : cut.length)}...`;
+  return truncateTitle(title);
 }
 
 function buildDescription(caption, permalink) {
