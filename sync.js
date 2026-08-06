@@ -240,18 +240,30 @@ async function main() {
   if (pendingCompilation.length >= COMPILATION_BATCH_SIZE) {
     if (await ffmpegAvailable()) {
       while (pendingCompilation.length >= COMPILATION_BATCH_SIZE) {
-        const batch = pendingCompilation.slice(0, COMPILATION_BATCH_SIZE);
-        console.log(`Armando recopilación con ${batch.length} reels...`);
+        console.log(`Armando recopilación con hasta ${COMPILATION_BATCH_SIZE} reels...`);
         try {
-          const { youtubeId, title } = await buildAndUploadCompilation({
-            batch,
+          const { youtubeId, title, usedIds, deadIds } = await buildAndUploadCompilation({
+            pending: pendingCompilation,
+            batchSize: COMPILATION_BATCH_SIZE,
             accessToken: IG_ACCESS_TOKEN,
             youtube,
           });
-          compilations.push({ youtubeId, title });
-          pendingCompilation.splice(0, COMPILATION_BATCH_SIZE);
+
+          if (deadIds.length > 0) {
+            console.warn(`${deadIds.length} reel(s) descartados de la cola (ya no disponibles en Instagram): ${deadIds.join(', ')}`);
+          }
+          const consumed = new Set([...(usedIds ?? []), ...(deadIds ?? [])]);
+          for (let i = pendingCompilation.length - 1; i >= 0; i--) {
+            if (consumed.has(pendingCompilation[i].id)) pendingCompilation.splice(i, 1);
+          }
           await persist();
-          console.log(`OK recopilación: ${title} -> https://studio.youtube.com/video/${youtubeId}/edit`);
+
+          if (youtubeId) {
+            compilations.push({ youtubeId, title });
+            console.log(`OK recopilación: ${title} -> https://studio.youtube.com/video/${youtubeId}/edit`);
+          } else {
+            console.log('No quedaron reels descargables en este lote, se omite la recopilación.');
+          }
         } catch (err) {
           console.error('Error armando recopilación:', err.message);
           break;

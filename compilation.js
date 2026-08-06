@@ -166,25 +166,51 @@ async function uploadCompilation(youtube, { filePath, title, description }) {
   return res.data.id;
 }
 
-export async function buildAndUploadCompilation({ batch, accessToken, youtube }) {
+// Recorre `pending` en orden y junta hasta `batchSize` clips descargables. Los items cuyo
+// media_url ya no esta disponible en Instagram (pasan las ~2-3 semanas y la API deja de
+// servirlo) se reportan en `deadIds` para que el llamador los descarte de la cola para
+// siempre, en vez de trabar el armado de recopilaciones indefinidamente.
+export async function buildAndUploadCompilation({ pending, batchSize, accessToken, youtube }) {
   const workDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'viken-compilation-'));
   try {
     const segments = [];
+    const usedIds = [];
+    const deadIds = [];
+    const permalinks = [];
 
     const introCard = path.join(workDir, 'intro.mp4');
     await buildCard('VIKEN HOME', 'Diseno y fabricacion propia', introCard);
     segments.push({ file: introCard, duration: CARD_DURATION });
 
-    const permalinks = [];
-    for (const [i, item] of batch.entries()) {
-      const media = await fetchMediaById(item.id, accessToken);
-      permalinks.push(media.permalink ?? item.permalink);
+    for (const item of pending) {
+      if (usedIds.length >= batchSize) break;
+      let media;
+      try {
+        media = await fetchMediaById(item.id, accessToken);
+      } catch (err) {
+        console.warn(`Reel ${item.id} ya no se puede leer de Instagram, se descarta: ${err.message}`);
+        deadIds.push(item.id);
+        continue;
+      }
+      if (!media.media_url) {
+        console.warn(`Reel ${item.id} perdio su media_url en Instagram, se descarta.`);
+        deadIds.push(item.id);
+        continue;
+      }
+
+      const i = usedIds.length;
       const raw = path.join(workDir, `raw-${i}.mp4`);
       const normalized = path.join(workDir, `clip-${i}.mp4`);
       await downloadFile(media.media_url, raw);
       await normalizeClip(raw, normalized);
       const duration = await getDuration(normalized);
       segments.push({ file: normalized, duration });
+      permalinks.push(media.permalink ?? item.permalink);
+      usedIds.push(item.id);
+    }
+
+    if (usedIds.length === 0) {
+      return { youtubeId: null, title: null, usedIds, deadIds };
     }
 
     const outroCard = path.join(workDir, 'outro.mp4');
@@ -194,11 +220,11 @@ export async function buildAndUploadCompilation({ batch, accessToken, youtube })
     const output = path.join(workDir, 'compilation.mp4');
     await concatenateWithTransitions(segments, output);
 
-    const title = `${batch.length} ideas de decoracion | VIKEN Home`;
+    const title = `${usedIds.length} ideas de decoracion | VIKEN Home`;
     const description = buildCompilationDescription(permalinks);
     const youtubeId = await uploadCompilation(youtube, { filePath: output, title, description });
 
-    return { youtubeId, title };
+    return { youtubeId, title, usedIds, deadIds };
   } finally {
     await fsp.rm(workDir, { recursive: true, force: true });
   }
