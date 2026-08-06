@@ -94,7 +94,15 @@ const BRAND_FOOTER = [
 ].join('\n');
 
 const HASHTAGS = '#VikenHome #Decoracion #Hogar #Shorts';
-const TAGS = ['VikenHome', 'Decoracion', 'Hogar', 'Shorts'];
+const TAGS = [
+  'VikenHome', 'Decoracion', 'Hogar', 'Impresion 3D', 'Diseño de interiores',
+  'Decoracion Argentina', 'Objetos decorativos', 'Macetas', 'Floreros', 'Jarrones',
+  'Portavelas', 'Velas decorativas', 'Decoracion minimalista', 'Decoracion boho',
+  'Home Decor', '3D Printing', 'Handmade', 'Taller propio', 'Diseño artesanal',
+  'Decoracion moderna', 'Decoracion living', 'Regalos originales', 'Shorts',
+  'DIY decoracion', 'Buenos Aires', 'Argentina', 'Piezas decorativas',
+  'Decoracion nordica', 'Ambientacion', 'Interiorismo',
+];
 
 function sanitizeForYoutube(text) {
   // YouTube rechaza < y > en título/descripción (error "invalid video description").
@@ -123,8 +131,14 @@ async function uploadToYoutube(youtube, { filePath, title, description }) {
   const res = await youtube.videos.insert({
     part: ['snippet', 'status'],
     requestBody: {
-      snippet: { title, description, tags: TAGS },
-      status: { privacyStatus: 'private', selfDeclaredMadeForKids: false },
+      snippet: {
+        title,
+        description,
+        tags: TAGS,
+        defaultLanguage: 'es',
+        defaultAudioLanguage: 'es',
+      },
+      status: { privacyStatus: 'private', selfDeclaredMadeForKids: true },
     },
     media: { body: fs.createReadStream(filePath) },
   });

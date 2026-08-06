@@ -148,8 +148,18 @@ async function uploadCompilation(youtube, { filePath, title, description }) {
   const res = await youtube.videos.insert({
     part: ['snippet', 'status'],
     requestBody: {
-      snippet: { title, description, tags: ['VikenHome', 'Decoracion', 'Hogar', 'Recopilacion'] },
-      status: { privacyStatus: 'private', selfDeclaredMadeForKids: false },
+      snippet: {
+        title,
+        description,
+        tags: [
+          'VikenHome', 'Decoracion', 'Hogar', 'Recopilacion', 'Impresion 3D',
+          'Diseño de interiores', 'Decoracion Argentina', 'Objetos decorativos',
+          'Home Decor', 'Handmade', 'Taller propio', 'Shorts',
+        ],
+        defaultLanguage: 'es',
+        defaultAudioLanguage: 'es',
+      },
+      status: { privacyStatus: 'private', selfDeclaredMadeForKids: true },
     },
     media: { body: fs.createReadStream(filePath) },
   });
