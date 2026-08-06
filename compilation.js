@@ -131,7 +131,7 @@ async function concatenateWithTransitions(segments, outputPath) {
 // Título variado por recopilación: usa el gancho (primera línea del caption) del primer
 // clip de la tanda, igual criterio que los Shorts individuales, en vez del genérico fijo
 // "N ideas de decoracion" que salía idéntico en todas las recopilaciones.
-function buildCompilationTitle(items) {
+export function buildCompilationTitle(items) {
   const count = items.length;
   const first = items.find((item) => item.caption && item.caption.trim());
   if (!first) return `${count} ideas de decoracion | VIKEN Home`;
@@ -146,7 +146,7 @@ const YOUTUBE_DESCRIPTION_LIMIT = 5000;
 
 // Incluye el copy real de cada Reel (no solo el link), para que la descripción refleje
 // el contenido de la recopilación igual que hace Instagram.
-function buildCompilationDescription(items) {
+export function buildCompilationDescription(items) {
   const header = 'Una selección de piezas VIKEN Home 🏠 — diseñamos y fabricamos nosotros mismos cada una, en nuestro propio taller.';
   const footer = [
     '¿Querés armar tu rincón? Te asesoramos 1:1 por Instagram.',
