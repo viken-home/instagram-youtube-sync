@@ -138,7 +138,7 @@ async function uploadToYoutube(youtube, { filePath, title, description }) {
         defaultLanguage: 'es',
         defaultAudioLanguage: 'es',
       },
-      status: { privacyStatus: 'private', selfDeclaredMadeForKids: true },
+      status: { privacyStatus: 'private', selfDeclaredMadeForKids: false },
     },
     media: { body: fs.createReadStream(filePath) },
   });
