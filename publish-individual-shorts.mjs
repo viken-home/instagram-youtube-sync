@@ -2,14 +2,36 @@
 // privados. Las recopilaciones se dejan afuera a propósito: varias tienen bloqueo de Content ID
 // pendiente de resolver y son un tema aparte.
 //
+// Cada video publicado queda anotado en published-log.csv (commiteado al repo), para tener un
+// registro permanente de que ya salio y no repetirlo por error en una corrida futura.
+//
 // Uso:
 //   node publish-individual-shorts.mjs            (dry run, solo lista)
 //   node publish-individual-shorts.mjs --apply     (publica de verdad)
 import 'dotenv/config';
+import fsp from 'node:fs/promises';
 import { google } from 'googleapis';
 
 const DRY_RUN = !process.argv.includes('--apply');
+const LOG_PATH = new URL('./published-log.csv', import.meta.url);
 const { YT_CLIENT_ID, YT_CLIENT_SECRET, YT_REFRESH_TOKEN } = process.env;
+
+function csvEscape(s) {
+  return `"${String(s).replace(/"/g, '""')}"`;
+}
+
+async function appendToLog(rows) {
+  let existing = '';
+  try {
+    existing = await fsp.readFile(LOG_PATH, 'utf-8');
+  } catch {
+    existing = 'fecha_publicacion,video_id,titulo,link\n';
+  }
+  const newLines = rows
+    .map((r) => `${r.date},${r.id},${csvEscape(r.title)},https://youtube.com/shorts/${r.id}`)
+    .join('\n');
+  await fsp.writeFile(LOG_PATH, existing + newLines + '\n');
+}
 
 function buildYoutubeClient() {
   const oauth2Client = new google.auth.OAuth2(YT_CLIENT_ID, YT_CLIENT_SECRET);
@@ -64,6 +86,8 @@ async function main() {
   }
 
   let ok = 0, failed = 0;
+  const published = [];
+  const today = new Date().toISOString().slice(0, 10);
   for (const v of individualShorts) {
     try {
       await youtube.videos.update({
@@ -71,12 +95,19 @@ async function main() {
         requestBody: { id: v.id, status: { ...v.status, privacyStatus: 'public' } },
       });
       console.log(`OK: ${v.id} | ${v.snippet.title}`);
+      published.push({ date: today, id: v.id, title: v.snippet.title });
       ok++;
     } catch (err) {
       console.error(`FALLO ${v.id}: ${err.message}`);
       failed++;
     }
   }
+
+  if (published.length > 0) {
+    await appendToLog(published);
+    console.log(`\nRegistrados en ${LOG_PATH.pathname.split('/').pop()}: ${published.length}`);
+  }
+
   console.log(`\nPublicados: ${ok}, fallidos: ${failed}`);
 }
 
