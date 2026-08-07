@@ -13,3 +13,21 @@ export function truncateTitle(title, maxLength = MAX_TITLE_LENGTH) {
   const lastSpace = cut.lastIndexOf(' ');
   return `${cut.slice(0, lastSpace > 40 ? lastSpace : cut.length)}...`;
 }
+
+export const BRAND_FOOTER = [
+  'VIKEN Home 🏠 diseñamos y fabricamos nosotros mismos cada pieza de decoración — no es catálogo genérico, es taller propio, así que lo que ves acá no lo conseguís en otro lado.',
+  '',
+  '¿Querés armar tu rincón? Te asesoramos 1:1 por Instagram.',
+  '',
+  '📷 Instagram: https://www.instagram.com/vikenhome_',
+  '🛒 Comprá acá: https://www.viken.com.ar',
+].join('\n');
+
+export const HASHTAGS = '#VikenHome #Decoracion #Hogar #Shorts';
+
+export function buildDescription(caption, permalink) {
+  const body = [caption, '', BRAND_FOOTER, '', `Post original: ${permalink}`, '', HASHTAGS]
+    .filter((line) => line !== null && line !== undefined)
+    .join('\n');
+  return sanitizeForYoutube(body);
+}

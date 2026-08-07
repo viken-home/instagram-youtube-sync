@@ -6,7 +6,8 @@ import path from 'node:path';
 import { google } from 'googleapis';
 import nodemailer from 'nodemailer';
 import { COMPILATION_BATCH_SIZE, ffmpegAvailable, buildAndUploadCompilation } from './compilation.js';
-import { MAX_TITLE_LENGTH, sanitizeForYoutube, truncateTitle } from './text-utils.js';
+import { sanitizeForYoutube, truncateTitle, buildDescription } from './text-utils.js';
+import { isCompilation, fetchAllChannelVideos, computeNextSlotFromVideos } from './youtube-helpers.js';
 
 const {
   IG_ACCESS_TOKEN,
@@ -31,7 +32,11 @@ function requireEnv(vars) {
 async function loadProcessed() {
   const raw = await fsp.readFile(PROCESSED_PATH, 'utf-8');
   const data = JSON.parse(raw);
-  return { processedIds: data.processedIds ?? [], pendingCompilation: data.pendingCompilation ?? [] };
+  return {
+    processedIds: data.processedIds ?? [],
+    pendingCompilation: data.pendingCompilation ?? [],
+    notifiedPublished: data.notifiedPublished ?? [],
+  };
 }
 
 async function saveProcessed(data) {
@@ -83,16 +88,6 @@ function buildYoutubeClient() {
   return google.youtube({ version: 'v3', auth: oauth2Client });
 }
 
-const BRAND_FOOTER = [
-  'VIKEN Home 🏠 diseñamos y fabricamos nosotros mismos cada pieza de decoración — no es catálogo genérico, es taller propio, así que lo que ves acá no lo conseguís en otro lado.',
-  '',
-  '¿Querés armar tu rincón? Te asesoramos 1:1 por Instagram.',
-  '',
-  '📷 Instagram: https://www.instagram.com/vikenhome_',
-  '🛒 Comprá acá: https://www.viken.com.ar',
-].join('\n');
-
-const HASHTAGS = '#VikenHome #Decoracion #Hogar #Shorts';
 const TAGS = [
   'VikenHome', 'Decoracion', 'Hogar', 'Impresion 3D', 'Diseño de interiores',
   'Decoracion Argentina', 'Objetos decorativos', 'Macetas', 'Floreros', 'Jarrones',
@@ -111,14 +106,7 @@ function buildTitle(caption, timestamp) {
   return truncateTitle(title);
 }
 
-function buildDescription(caption, permalink) {
-  const body = [caption, '', BRAND_FOOTER, '', `Post original: ${permalink}`, '', HASHTAGS]
-    .filter((line) => line !== null && line !== undefined)
-    .join('\n');
-  return sanitizeForYoutube(body);
-}
-
-async function uploadToYoutube(youtube, { filePath, title, description }) {
+async function uploadToYoutube(youtube, { filePath, title, description, publishAt }) {
   const res = await youtube.videos.insert({
     part: ['snippet', 'status'],
     requestBody: {
@@ -129,7 +117,13 @@ async function uploadToYoutube(youtube, { filePath, title, description }) {
         defaultLanguage: 'es',
         defaultAudioLanguage: 'es',
       },
-      status: { privacyStatus: 'private', selfDeclaredMadeForKids: false },
+      status: {
+        privacyStatus: 'private',
+        selfDeclaredMadeForKids: false,
+        // Programado: YouTube lo hace publico solo en esta fecha, sin que haga falta correr
+        // nada mas ese dia. Uno por dia, para no volcar todo junto (ver nextAvailableSlot).
+        ...(publishAt ? { publishAt: publishAt.toISOString() } : {}),
+      },
     },
     media: { body: fs.createReadStream(filePath) },
   });
@@ -143,6 +137,7 @@ function buildEmailSection(title, items) {
       (item) =>
         `<li><a href="https://studio.youtube.com/video/${item.youtubeId}/edit">${item.title}</a>` +
         (item.permalink ? ` (<a href="${item.permalink}">post original</a>)` : '') +
+        (item.publishAt ? ` — se publica solo el ${item.publishAt.slice(0, 10)}` : '') +
         '</li>'
     )
     .join('');
@@ -161,9 +156,10 @@ async function sendNotificationEmail(uploaded, compilations) {
   });
 
   const html =
-    '<p>Novedades subidas a YouTube como video privado. Revisalas y publicalas manualmente desde YouTube Studio:</p>' +
-    buildEmailSection('Reels individuales:', uploaded) +
-    buildEmailSection('Recopilaciones:', compilations);
+    '<p>Novedades subidas a YouTube. Los Shorts individuales ya quedaron programados para publicarse solos ' +
+    'en su fecha; las recopilaciones quedan privadas para que las revises y publiques manualmente:</p>' +
+    buildEmailSection('Reels individuales (programados):', uploaded) +
+    buildEmailSection('Recopilaciones (revisar manualmente):', compilations);
 
   const total = uploaded.length + compilations.length;
   await transporter.sendMail({
@@ -171,6 +167,32 @@ async function sendNotificationEmail(uploaded, compilations) {
     to: NOTIFY_EMAIL,
     subject: `${total} video(s) nuevo(s) subido(s) a YouTube como borrador`,
     html,
+  });
+}
+
+// Avisa cuando un Short programado se hizo publico solo (YouTube lo publica el mismo en la
+// fecha de publishAt, sin que este script tenga que correr en ese instante exacto). Como sync.js
+// corre cada 30-60 min, el aviso llega poco despues de que efectivamente salio.
+async function sendPublishedConfirmationEmail(videos) {
+  if (!GMAIL_APP_PASSWORD || !NOTIFY_EMAIL) {
+    console.warn('GMAIL_APP_PASSWORD o NOTIFY_EMAIL no configurados: se omite el mail.');
+    return;
+  }
+
+  const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: { user: NOTIFY_EMAIL, pass: GMAIL_APP_PASSWORD },
+  });
+
+  const listHtml = videos
+    .map((v) => `<li><a href="https://youtube.com/shorts/${v.id}">${v.snippet.title}</a></li>`)
+    .join('');
+
+  await transporter.sendMail({
+    from: NOTIFY_EMAIL,
+    to: NOTIFY_EMAIL,
+    subject: `✅ ${videos.length} Short(s) publicado(s) hoy en YouTube`,
+    html: `<p>Se publicaron solos, tal como estaban programados:</p><ul>${listHtml}</ul>`,
   });
 }
 
@@ -186,9 +208,14 @@ async function main() {
   const processed = await loadProcessed();
   const processedIds = new Set(processed.processedIds);
   const pendingCompilation = [...processed.pendingCompilation];
+  const notifiedPublished = new Set(processed.notifiedPublished);
 
   const persist = () =>
-    saveProcessed({ processedIds: [...processedIds], pendingCompilation });
+    saveProcessed({
+      processedIds: [...processedIds],
+      pendingCompilation,
+      notifiedPublished: [...notifiedPublished],
+    });
 
   const reels = await fetchInstagramReels();
   const newReels = reels.filter((r) => !processedIds.has(r.id));
@@ -196,10 +223,19 @@ async function main() {
   const youtube = buildYoutubeClient();
   const uploaded = [];
 
+  // Foto del estado real del canal al arrancar: sirve tanto para saber donde sigue la cola de
+  // programacion como para detectar que se hizo publico desde la corrida anterior.
+  const channelVideos = await fetchAllChannelVideos(youtube);
+
   if (newReels.length === 0) {
     console.log('No hay reels nuevos.');
   } else {
     console.log(`Encontrados ${newReels.length} reel(s) nuevo(s).`);
+
+    // Cada reel nuevo se programa al final de la cola diaria (uno por dia, 19:00 ARG) en vez de
+    // quedar privado sin fecha. El cursor arranca en el proximo turno libre segun lo que ya haya
+    // programado, y avanza un dia por cada reel de esta misma corrida.
+    let nextSlot = computeNextSlotFromVideos(channelVideos);
 
     for (const reel of newReels) {
       const tmpFile = path.join(os.tmpdir(), `${reel.id}.mp4`);
@@ -209,16 +245,20 @@ async function main() {
 
         const title = buildTitle(reel.caption, reel.timestamp);
         const description = buildDescription(reel.caption, reel.permalink);
+        const publishAt = nextSlot;
 
-        console.log(`Subiendo ${reel.id} a YouTube...`);
-        const youtubeId = await uploadToYoutube(youtube, { filePath: tmpFile, title, description });
+        console.log(`Subiendo ${reel.id} a YouTube (se publica solo el ${publishAt.toISOString().slice(0, 10)})...`);
+        const youtubeId = await uploadToYoutube(youtube, { filePath: tmpFile, title, description, publishAt });
 
-        uploaded.push({ youtubeId, title, permalink: reel.permalink });
+        uploaded.push({ youtubeId, title, permalink: reel.permalink, publishAt: publishAt.toISOString() });
 
         processedIds.add(reel.id);
         pendingCompilation.push({ id: reel.id, permalink: reel.permalink });
         await persist();
         console.log(`OK: ${reel.id} -> https://studio.youtube.com/video/${youtubeId}/edit`);
+
+        nextSlot = new Date(nextSlot);
+        nextSlot.setUTCDate(nextSlot.getUTCDate() + 1);
       } catch (err) {
         console.error(`Error procesando ${reel.id}:`, err.message);
       } finally {
@@ -267,6 +307,20 @@ async function main() {
 
   if (uploaded.length > 0 || compilations.length > 0) {
     await sendNotificationEmail(uploaded, compilations);
+  }
+
+  // Shorts que ya estaban programados y, desde la corrida anterior, YouTube los hizo publicos
+  // solo (no hace falta que este script corra justo a las 19:00, el aviso llega en la siguiente
+  // pasada del cron). channelVideos es la foto de ANTES de subir nada en esta corrida, asi que
+  // nunca confunde un upload de recien con una publicacion real.
+  const newlyPublic = channelVideos.filter(
+    (v) => v.status.privacyStatus === 'public' && !isCompilation(v) && !notifiedPublished.has(v.id)
+  );
+  if (newlyPublic.length > 0) {
+    console.log(`${newlyPublic.length} Short(s) se publicaron solos desde la corrida anterior.`);
+    await sendPublishedConfirmationEmail(newlyPublic);
+    for (const v of newlyPublic) notifiedPublished.add(v.id);
+    await persist();
   }
 }
 
