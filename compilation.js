@@ -215,10 +215,6 @@ export async function buildAndUploadCompilation({ pending, batchSize, accessToke
     const deadIds = [];
     const items = [];
 
-    const introCard = path.join(workDir, 'intro.mp4');
-    await buildCard('VIKEN HOME', 'Diseno y fabricacion propia', introCard);
-    segments.push({ file: introCard, duration: CARD_DURATION });
-
     for (const item of pending) {
       if (usedIds.length >= batchSize) break;
       let media;
