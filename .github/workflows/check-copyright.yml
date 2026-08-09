@@ -1,0 +1,45 @@
+name: Chequeo diario de bloqueos de Content ID
+
+# Avisa por mail si aparece un video nuevo bloqueado por Content ID (o rechazado) en el canal.
+# Ver check-copyright-blocks.mjs para el detalle de como se detecta (no es un campo obvio de la
+# Data API, hubo que confirmarlo a mano contra un video que se sabia bloqueado).
+on:
+  schedule:
+    - cron: '0 12 * * *' # 09:00 ART
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: check-copyright
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+
+      - run: node check-copyright-blocks.mjs
+        env:
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
+
+      - name: Commit copyright-check-state.json
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add copyright-check-state.json
+          git diff --cached --quiet || git commit -m "chore: actualizar copyright-check-state.json [skip ci]"
+          git push

@@ -29,7 +29,10 @@ export async function fetchAllChannelVideos(youtube) {
   let all = [];
   for (let i = 0; i < videoIds.length; i += 50) {
     const batch = videoIds.slice(i, i + 50);
-    const res = await youtube.videos.list({ part: ['snippet', 'status'], id: batch });
+    // contentDetails incluido para poder leer contentDetails.regionRestriction.blocked -- es la
+    // unica forma (confirmada a mano) de detectar un bloqueo de Content ID via la Data API publica:
+    // status.rejectionReason queda vacio para este tipo de bloqueo, no lo expone.
+    const res = await youtube.videos.list({ part: ['snippet', 'status', 'contentDetails'], id: batch });
     all.push(...res.data.items);
   }
   return all;
