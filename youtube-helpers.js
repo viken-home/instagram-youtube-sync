@@ -6,7 +6,9 @@ const PUBLISH_HOUR_ARG = 19; // 19:00 hora Argentina. Argentina no usa horario d
 const PUBLISH_HOUR_UTC = PUBLISH_HOUR_ARG + 3;
 
 export function isCompilation(video) {
-  return video.snippet.description.includes('Una selección de piezas VIKEN Home');
+  // "VIKEN" (sin "Home") es substring de ambos formatos, viejo y nuevo -- asi el detector
+  // sigue funcionando para las recopilaciones ya publicadas antes del cambio de texto.
+  return video.snippet.description.includes('Una selección de piezas VIKEN');
 }
 
 export async function fetchAllChannelVideos(youtube) {

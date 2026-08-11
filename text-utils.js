@@ -15,7 +15,7 @@ export function truncateTitle(title, maxLength = MAX_TITLE_LENGTH) {
 }
 
 export const BRAND_FOOTER = [
-  'VIKEN Home 🏠 diseñamos y fabricamos nosotros mismos cada pieza de decoración — no es catálogo genérico, es taller propio, así que lo que ves acá no lo conseguís en otro lado.',
+  'VIKEN 🏠 diseñamos y fabricamos nosotros mismos cada pieza de decoración — no es catálogo genérico, es taller propio, así que lo que ves acá no lo conseguís en otro lado.',
   '',
   '¿Querés armar tu rincón? Te asesoramos 1:1 por Instagram.',
   '',

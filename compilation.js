@@ -134,9 +134,9 @@ async function concatenateWithTransitions(segments, outputPath) {
 export function buildCompilationTitle(items) {
   const count = items.length;
   const first = items.find((item) => item.caption && item.caption.trim());
-  if (!first) return `${count} ideas de decoracion | VIKEN Home`;
+  if (!first) return `${count} ideas de decoracion | VIKEN`;
 
-  const suffix = ' | VIKEN Home';
+  const suffix = ' | VIKEN';
   const headline = sanitizeForYoutube(first.caption.split('\n')[0].trim());
   const trimmed = truncateTitle(headline, 95 - suffix.length);
   return `${trimmed}${suffix}`;
@@ -147,7 +147,7 @@ const YOUTUBE_DESCRIPTION_LIMIT = 5000;
 // Incluye el copy real de cada Reel (no solo el link), para que la descripción refleje
 // el contenido de la recopilación igual que hace Instagram.
 export function buildCompilationDescription(items) {
-  const header = 'Una selección de piezas VIKEN Home 🏠 — diseñamos y fabricamos nosotros mismos cada una, en nuestro propio taller.';
+  const header = 'Una selección de piezas VIKEN 🏠 — diseñamos y fabricamos nosotros mismos cada una, en nuestro propio taller.';
   const footer = [
     '¿Querés armar tu rincón? Te asesoramos 1:1 por Instagram.',
     '',

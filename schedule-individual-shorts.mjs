@@ -88,7 +88,7 @@ async function main() {
   const youtube = buildYoutubeClient();
   const videos = await fetchAllChannelVideos(youtube);
 
-  const isCompilation = (v) => v.snippet.description.includes('Una selección de piezas VIKEN Home');
+  const isCompilation = (v) => v.snippet.description.includes('Una selección de piezas VIKEN');
   const individualShorts = videos
     .filter((v) => v.status.privacyStatus === 'private' && !isCompilation(v))
     .sort((a, b) => new Date(a.snippet.publishedAt) - new Date(b.snippet.publishedAt));
