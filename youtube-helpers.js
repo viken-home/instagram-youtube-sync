@@ -28,6 +28,13 @@ export async function fetchAllChannelVideos(youtube) {
     pageToken = res.data.nextPageToken;
   } while (pageToken);
 
+  // La paginacion de la playlist de subidos puede repetir un mismo video si se publica/sube algo
+  // justo mientras se esta paginando (pasa seguido: este mismo script sube/publica Shorts al mismo
+  // tiempo que corre esta consulta) -- confirmado: causo un mail de "4 Shorts publicados" que en
+  // realidad eran el mismo video 4 veces. Se saca el duplicado ANTES de pedir los detalles, asi
+  // ningun consumidor de fetchAllChannelVideos (mails, calculo de proximo horario) lo hereda.
+  videoIds = [...new Set(videoIds)];
+
   let all = [];
   for (let i = 0; i < videoIds.length; i += 50) {
     const batch = videoIds.slice(i, i + 50);
